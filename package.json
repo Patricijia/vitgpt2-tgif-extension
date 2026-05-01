@@ -1,0 +1,19 @@
+{
+  "name": "vitgpt2-tgif-gif-extension",
+  "version": "1.0.0",
+  "description": "GIF accessibility extension using TGIF fine-tuned ViT-GPT2 (6-frame grid)",
+  "main": "background.js",
+  "scripts": {
+    "build": "npx webpack --config webpack.config.cjs"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "copy-webpack-plugin": "^14.0.0",
+    "webpack": "^5.105.4",
+    "webpack-cli": "^7.0.2"
+  }
+}
