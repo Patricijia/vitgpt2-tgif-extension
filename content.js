@@ -1,9 +1,14 @@
 const PAGE_START = performance.now();
 console.log("[GIF] ViT-GPT2 TGIF GIF Accessibility Reader running...");
 
-// Auto-benchmark: set total runs and delay between refreshes
-const BENCHMARK_TOTAL_RUNS = 51; // 1 warmup + 50 measured
-const BENCHMARK_DELAY_MS = 3000; // wait 3s after save before refresh
+// OCR can be disabled via ?ocr=off in the page URL — used by latency-benchmark.
+const OCR_ENABLED = new URLSearchParams(window.location.search).get("ocr") !== "off";
+console.log("[GIF] OCR " + (OCR_ENABLED ? "enabled" : "disabled"));
+
+// Auto-benchmark: total runs (override with ?runs=N) and delay between refreshes.
+const BENCHMARK_TOTAL_RUNS = parseInt(new URLSearchParams(window.location.search).get("runs") || "51", 10);
+const BENCHMARK_DELAY_MS = 10000;
+const RUN_KEY = "benchmarkRun-ocr-" + (OCR_ENABLED ? "on" : "off");
 
 const seen = new Set();
 const retryCount = new Map();
@@ -11,7 +16,14 @@ const MAX_RETRIES = 10;
 let labelsApplied = 0;
 let totalGifs = 0;
 
+// Collect metrics for final summary. Mirrored to a DOM data attribute so
+// puppeteer benchmarks (which run in the page's isolated world) can read it.
 const allMetrics = [];
+function publishMetrics() {
+  try {
+    document.documentElement.dataset.gifMetrics = JSON.stringify(allMetrics);
+  } catch {}
+}
 let firstModelLoadMs = null;
 let firstOcrLoadMs = null;
 
@@ -26,6 +38,7 @@ async function labelGif(gif) {
     const response = await chrome.runtime.sendMessage({
       type: "DESCRIBE_GIF",
       url,
+      ocr: OCR_ENABLED,
     });
 
     if (response.error) throw new Error(response.error);
@@ -62,6 +75,7 @@ async function labelGif(gif) {
         wallClockMs: Math.round(performance.now() - t0),
         sincePageLoadMs: Math.round(performance.now() - PAGE_START),
       });
+      publishMetrics();
     }
 
     const elapsed = (performance.now() - t0).toFixed(0);
@@ -180,7 +194,7 @@ function saveMetrics(totalTime, ocrCount) {
     perGif: allMetrics,
   };
 
-  chrome.runtime.sendMessage({ type: "SAVE_METRICS", format: "json", data: JSON.stringify(report, null, 2) });
+  chrome.runtime.sendMessage({ type: "SAVE_METRICS", format: "json", ocrEnabled: OCR_ENABLED, data: JSON.stringify(report, null, 2) });
 
   const csvHeader = [
     "gif_index", "url", "total_gif_frames", "frames_extracted",
@@ -207,14 +221,14 @@ function saveMetrics(totalTime, ocrCount) {
     '"' + (m.caption || "").replace(/"/g, '""') + '"',
   ].join(","));
 
-  chrome.runtime.sendMessage({ type: "SAVE_METRICS", format: "csv", data: [csvHeader, ...csvRows].join("\n") });
+  chrome.runtime.sendMessage({ type: "SAVE_METRICS", format: "csv", ocrEnabled: OCR_ENABLED, data: [csvHeader, ...csvRows].join("\n") });
 
   console.log("[GIF] Benchmark metrics saved to ~/Downloads/gif-benchmarks/");
   console.log("[GIF] AUTO-REFRESH: starting refresh logic now...");
 
-  const runCount = parseInt(sessionStorage.getItem('benchmarkRun') || '0') + 1;
-  sessionStorage.setItem('benchmarkRun', String(runCount));
-  console.log("[GIF] AUTO-REFRESH: run " + runCount + " of " + BENCHMARK_TOTAL_RUNS);
+  const runCount = parseInt(sessionStorage.getItem(RUN_KEY) || "0", 10) + 1;
+  sessionStorage.setItem(RUN_KEY, String(runCount));
+  console.log("[GIF] AUTO-REFRESH: run " + runCount + " of " + BENCHMARK_TOTAL_RUNS + " (OCR " + (OCR_ENABLED ? "on" : "off") + ")");
 
   if (runCount < BENCHMARK_TOTAL_RUNS) {
     console.log("[GIF] AUTO-REFRESH: will reload in " + BENCHMARK_DELAY_MS + "ms...");
@@ -223,8 +237,8 @@ function saveMetrics(totalTime, ocrCount) {
       window.location.reload();
     }, BENCHMARK_DELAY_MS);
   } else {
-    console.log("[GIF] All benchmark runs complete!");
-    sessionStorage.removeItem('benchmarkRun');
+    console.log("[GIF] All benchmark runs complete! Run sessionStorage.removeItem('" + RUN_KEY + "') to reset.");
+    sessionStorage.removeItem(RUN_KEY);
   }
 }
 

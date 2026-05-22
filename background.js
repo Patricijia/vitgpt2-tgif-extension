@@ -15,14 +15,21 @@ async function ensureOffscreen() {
 
 ensureOffscreen();
 
+// Separate run counters for OCR-on vs OCR-off so the runs don't interleave.
 let runCounter = 0;
+let runCounterNoOcr = 0;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "SAVE_METRICS") {
-    if (message.format === "json") runCounter++;
+    const ocrOff = message.ocrEnabled === false;
+    if (message.format === "json") {
+      if (ocrOff) runCounterNoOcr++; else runCounter++;
+    }
+    const id = ocrOff ? runCounterNoOcr : runCounter;
+    const suffix = ocrOff ? "-no-ocr" : "";
     const mimeType = message.format === "json" ? "application/json" : "text/csv";
     const dataUrl = `data:${mimeType};base64,${btoa(unescape(encodeURIComponent(message.data)))}`;
-    const filename = `vitgpt2-tgif-benchmark-run${runCounter}.${message.format}`;
+    const filename = `vitgpt2-tgif-benchmark${suffix}-run${id}.${message.format}`;
 
     chrome.downloads.download({
       url: dataUrl,
@@ -30,7 +37,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       conflictAction: "overwrite",
       saveAs: false,
     }, () => {
-      sendResponse({ ok: true, runId: runCounter });
+      sendResponse({ ok: true, runId: id });
     });
 
     return true;

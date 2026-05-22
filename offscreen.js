@@ -281,16 +281,16 @@ async function extractTextBestOf(blobUrls) {
 }
 
 // === Describe GIF — single grid caption (no summarization needed) ===
-async function describeGif(url) {
+async function describeGif(url, ocrEnabled = true) {
   const t0 = performance.now();
 
-  await Promise.all([loadModel(), loadOCR()]);
+  await Promise.all([loadModel(), ocrEnabled ? loadOCR() : Promise.resolve()]);
   const tModelsReady = performance.now();
 
   // Build grid and extract OCR frames in parallel
   const [{ grid, frameCount, framesUsed }, ocrBlobUrls] = await Promise.all([
     buildGrid(url),
-    extractOCRFrames(url),
+    ocrEnabled ? extractOCRFrames(url) : Promise.resolve([]),
   ]);
   const tFrames = performance.now();
 
@@ -302,7 +302,17 @@ async function describeGif(url) {
     return { caption: result[0].generated_text.trim(), captionTime };
   })();
 
-  const ocrPromise = extractTextBestOf(ocrBlobUrls);
+  // Time OCR inside the promise so ocrMs reflects pure OCR cost,
+  // independent of when the parallel caption finishes.
+  let ocrMs = 0;
+  const ocrPromise = ocrBlobUrls.length > 0
+    ? (async () => {
+        const t0 = performance.now();
+        const text = await extractTextBestOf(ocrBlobUrls);
+        ocrMs = performance.now() - t0;
+        return text;
+      })()
+    : Promise.resolve("");
 
   const [{ caption: rawCaption, captionTime }, ocrText] = await Promise.all([captionPromise, ocrPromise]);
   const tDone = performance.now();
@@ -320,6 +330,8 @@ async function describeGif(url) {
     totalMs: Math.round(tDone - t0),
     framesExtracted: framesUsed,
     totalGifFrames: frameCount,
+    ocrEnabled,
+    ocrMs: Math.round(ocrMs),
     ocrDetected: ocrText.length > 0,
     ocrText: ocrText || null,
     device: "webgpu",
@@ -341,7 +353,8 @@ async function describeGif(url) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type !== "DESCRIBE_GIF" || message.target !== "offscreen") return;
 
-  describeGif(message.url)
+  const ocrEnabled = message.ocr !== false;
+  describeGif(message.url, ocrEnabled)
     .then(({ caption, metrics }) => sendResponse({ caption, metrics }))
     .catch((err) => {
       console.error("[offscreen] Error:", err);
